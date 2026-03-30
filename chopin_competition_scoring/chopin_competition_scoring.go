@@ -40,7 +40,14 @@ func AddScore(c Contestant, piece string, score int) Contestant {
 	return newC
 }
 
-// CorrectedAverage calculates average with simple correction:
+// AddScores adds multiple scores for one piece and returns updated contestant.
+func AddScores(c Contestant, piece string, scores []int) Contestant {
+	for _, s := range scores {
+		c = AddScore(c, piece, s)
+	}
+	return c
+}
+
 // if there are at least 3 scores, remove one min and one max, then average the rest.
 func CorrectedAverage(scores []int) float64 {
 	if len(scores) == 0 {
@@ -124,62 +131,17 @@ func main() {
 	max = AddRepertoire(max, pieces)
 	lewis = AddRepertoire(lewis, pieces)
 
-	// Alex scores
-	charles = AddScore(charles, "Etude Op.10 No.1", 23)
-	charles = AddScore(charles, "Etude Op.10 No.1", 24)
-	charles = AddScore(charles, "Etude Op.10 No.1", 22)
-	charles = AddScore(charles, "Etude Op.10 No.1", 25)
-	charles = AddScore(charles, "Etude Op.10 No.1", 21)
+	charles = AddScores(charles, "Etude Op.10 No.1", []int{23, 24, 22, 25, 21})
+	charles = AddScores(charles, "Nocturne Op.9 No.2", []int{20, 21, 22, 19, 23})
+	charles = AddScores(charles, "Ballade No.1", []int{24, 23, 25, 22, 24})
 
-	charles = AddScore(charles, "Nocturne Op.9 No.2", 20)
-	charles = AddScore(charles, "Nocturne Op.9 No.2", 21)
-	charles = AddScore(charles, "Nocturne Op.9 No.2", 22)
-	charles = AddScore(charles, "Nocturne Op.9 No.2", 19)
-	charles = AddScore(charles, "Nocturne Op.9 No.2", 23)
+	max = AddScores(max, "Etude Op.10 No.1", []int{22, 23, 24, 21, 23})
+	max = AddScores(max, "Nocturne Op.9 No.2", []int{24, 23, 22, 25, 24})
+	max = AddScores(max, "Ballade No.1", []int{20, 21, 22, 23, 24})
 
-	charles = AddScore(charles, "Ballade No.1", 24)
-	charles = AddScore(charles, "Ballade No.1", 23)
-	charles = AddScore(charles, "Ballade No.1", 25)
-	charles = AddScore(charles, "Ballade No.1", 22)
-	charles = AddScore(charles, "Ballade No.1", 24)
-
-	// Bella scores
-	max = AddScore(max, "Etude Op.10 No.1", 22)
-	max = AddScore(max, "Etude Op.10 No.1", 23)
-	max = AddScore(max, "Etude Op.10 No.1", 24)
-	max = AddScore(max, "Etude Op.10 No.1", 21)
-	max = AddScore(max, "Etude Op.10 No.1", 23)
-
-	max = AddScore(max, "Nocturne Op.9 No.2", 24)
-	max = AddScore(max, "Nocturne Op.9 No.2", 23)
-	max = AddScore(max, "Nocturne Op.9 No.2", 22)
-	max = AddScore(max, "Nocturne Op.9 No.2", 25)
-	max = AddScore(max, "Nocturne Op.9 No.2", 24)
-
-	max = AddScore(max, "Ballade No.1", 20)
-	max = AddScore(max, "Ballade No.1", 21)
-	max = AddScore(max, "Ballade No.1", 22)
-	max = AddScore(max, "Ballade No.1", 23)
-	max = AddScore(max, "Ballade No.1", 24)
-
-	// Chris scores
-	lewis = AddScore(lewis, "Etude Op.10 No.1", 25)
-	lewis = AddScore(lewis, "Etude Op.10 No.1", 24)
-	lewis = AddScore(lewis, "Etude Op.10 No.1", 25)
-	lewis = AddScore(lewis, "Etude Op.10 No.1", 23)
-	lewis = AddScore(lewis, "Etude Op.10 No.1", 22)
-
-	lewis = AddScore(lewis, "Nocturne Op.9 No.2", 19)
-	lewis = AddScore(lewis, "Nocturne Op.9 No.2", 20)
-	lewis = AddScore(lewis, "Nocturne Op.9 No.2", 21)
-	lewis = AddScore(lewis, "Nocturne Op.9 No.2", 22)
-	lewis = AddScore(lewis, "Nocturne Op.9 No.2", 23)
-
-	lewis = AddScore(lewis, "Ballade No.1", 25)
-	lewis = AddScore(lewis, "Ballade No.1", 25)
-	lewis = AddScore(lewis, "Ballade No.1", 24)
-	lewis = AddScore(lewis, "Ballade No.1", 23)
-	lewis = AddScore(lewis, "Ballade No.1", 24)
+	lewis = AddScores(lewis, "Etude Op.10 No.1", []int{25, 24, 25, 23, 22})
+	lewis = AddScores(lewis, "Nocturne Op.9 No.2", []int{19, 20, 21, 22, 23})
+	lewis = AddScores(lewis, "Ballade No.1", []int{25, 25, 24, 23, 24})
 
 	contestants := []Contestant{charles, max, lewis}
 
