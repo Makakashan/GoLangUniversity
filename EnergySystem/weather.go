@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// WeatherStation generuje zmieniający się stan pogody dla całej symulacji.
 type WeatherStation struct {
 	windSpeed float64
 	solar     float64
@@ -57,6 +58,7 @@ func (ws *WeatherStation) Run(ctx context.Context, wg *sync.WaitGroup, broadcast
 	}
 }
 
+// WindFarm przelicza wiatr na moc i wspiera ograniczanie produkcji.
 type WindFarm struct {
 	name             string
 	maxPower         float64
@@ -74,6 +76,7 @@ func NewWindFarm(name string, maxPower float64, broadcaster *Broadcaster) *WindF
 	}
 }
 
+// Run aktualizuje moc farmy po każdej nowej paczce pogody.
 func (wf *WindFarm) Run(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
@@ -123,6 +126,7 @@ func (wf *WindFarm) GetName() string {
 	return wf.name
 }
 
+// SolarFarm przelicza nasłonecznienie na moc i też obsługuje curtailment.
 type SolarFarm struct {
 	name             string
 	maxPower         float64
@@ -140,6 +144,7 @@ func NewSolarFarm(name string, maxPower float64, broadcaster *Broadcaster) *Sola
 	}
 }
 
+// Run aktualizuje moc farmy na podstawie bieżącego nasłonecznienia.
 func (sf *SolarFarm) Run(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {

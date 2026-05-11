@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// TrendPredictor analizuje historię pogody i szacuje zmianę OZE.
 type TrendPredictor struct {
 	weatherCh  chan WeatherData
 	forecastCh chan ForecastReport
@@ -15,6 +16,7 @@ type TrendPredictor struct {
 	bufferMu   sync.Mutex
 }
 
+// NewTrendPredictor podpina się do broadcastera i tworzy kanał prognozy.
 func NewTrendPredictor(broadcaster *Broadcaster) *TrendPredictor {
 	return &TrendPredictor{
 		weatherCh:  broadcaster.Subscribe(),
@@ -27,6 +29,7 @@ func (tp *TrendPredictor) GetForecastChan() <-chan ForecastReport {
 	return tp.forecastCh
 }
 
+// Run zbiera pogodę do bufora i cyklicznie wystawia nową prognozę.
 func (tp *TrendPredictor) Run(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -72,6 +75,7 @@ func (tp *TrendPredictor) Run(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
+// calculateForecast porównuje dwie połowy historii, aby wykryć trend.
 func (tp *TrendPredictor) calculateForecast(buffer []WeatherData) ForecastReport {
 	half := len(buffer) / 2
 	if half == 0 {

@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// CSVDataLogger zapisuje logi asynchronicznie, żeby nie blokować symulacji.
 type CSVDataLogger struct {
 	logChan   chan LogEntry
 	file      *os.File
@@ -18,6 +19,7 @@ type CSVDataLogger struct {
 	mu        sync.Mutex
 }
 
+// NewCSVDataLogger tworzy plik CSV i nagłówek kolumn.
 func NewCSVDataLogger(filename string) (*CSVDataLogger, error) {
 	os.MkdirAll("logs", 0755)
 	file, err := os.Create(filename)
@@ -29,7 +31,7 @@ func NewCSVDataLogger(filename string) (*CSVDataLogger, error) {
 	csvWriter := csv.NewWriter(writer)
 
 	csvWriter.Write([]string{
-		"GridStep", "WindSpeed", "SolarPct", "OZEPower", "Conventional",
+		"GridStep", "WindSpeed", "SolarStrength", "OZEPower", "Conventional",
 		"SoC", "TotalDemand", "Balance", "Status", "LoadShedCount", "Timestamp",
 	})
 	csvWriter.Flush()
@@ -42,6 +44,7 @@ func NewCSVDataLogger(filename string) (*CSVDataLogger, error) {
 	}, nil
 }
 
+// LogEntry tylko odkłada wpis do kanału, bez blokowania głównego wątku.
 func (dl *CSVDataLogger) LogEntry(entry LogEntry) {
 	select {
 	case dl.logChan <- entry:
@@ -49,6 +52,7 @@ func (dl *CSVDataLogger) LogEntry(entry LogEntry) {
 	}
 }
 
+// Run konsumuje wpisy z kanału i zapisuje je do pliku.
 func (dl *CSVDataLogger) Run(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -71,7 +75,7 @@ func (dl *CSVDataLogger) writeEntry(entry LogEntry) {
 	record := []string{
 		fmt.Sprintf("%d", entry.GridStep),
 		fmt.Sprintf("%.2f", entry.WindSpeed),
-		fmt.Sprintf("%.2f", entry.SolarPct),
+		fmt.Sprintf("%.2f", entry.SolarStrength),
 		fmt.Sprintf("%.2f", entry.OZEPower),
 		fmt.Sprintf("%.2f", entry.Conventional),
 		fmt.Sprintf("%.4f", entry.SoC),
@@ -84,6 +88,7 @@ func (dl *CSVDataLogger) writeEntry(entry LogEntry) {
 	dl.csvWriter.Write(record)
 }
 
+// flush zapisuje bufory i zamyka plik przy wyłączaniu systemu.
 func (dl *CSVDataLogger) flush() {
 	dl.mu.Lock()
 	defer dl.mu.Unlock()

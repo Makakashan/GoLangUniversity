@@ -9,6 +9,7 @@ import (
 	"sync"
 )
 
+// JSONDataLogger zapisuje te same logi w formacie JSON.
 type JSONDataLogger struct {
 	logChan chan LogEntry
 	file    *os.File
@@ -17,6 +18,7 @@ type JSONDataLogger struct {
 	mu      sync.Mutex
 }
 
+// NewJSONDataLogger tworzy plik JSON z czytelnym formatowaniem.
 func NewJSONDataLogger(filename string) (*JSONDataLogger, error) {
 	if err := os.MkdirAll("logs", 0755); err != nil {
 		return nil, err
@@ -39,6 +41,7 @@ func NewJSONDataLogger(filename string) (*JSONDataLogger, error) {
 	}, nil
 }
 
+// LogEntry nie blokuje reszty symulacji, jeśli logger chwilowo nie nadąża.
 func (dl *JSONDataLogger) LogEntry(entry LogEntry) {
 	select {
 	case dl.logChan <- entry:
@@ -46,6 +49,7 @@ func (dl *JSONDataLogger) LogEntry(entry LogEntry) {
 	}
 }
 
+// Run zapisuje kolejne wpisy do pliku aż do zatrzymania systemu.
 func (dl *JSONDataLogger) Run(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -67,6 +71,7 @@ func (dl *JSONDataLogger) writeEntry(entry LogEntry) {
 	_ = dl.encoder.Encode(entry)
 }
 
+// flush domyka bufor i plik na zakończenie pracy.
 func (dl *JSONDataLogger) flush() {
 	dl.mu.Lock()
 	defer dl.mu.Unlock()

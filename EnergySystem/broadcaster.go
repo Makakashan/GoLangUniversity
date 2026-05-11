@@ -2,6 +2,7 @@ package main
 
 import "sync"
 
+// Broadcaster rozsyła dane pogodowe do wszystkich subskrybentów.
 type Broadcaster struct {
 	mu          sync.RWMutex
 	subscribers []chan WeatherData
@@ -13,6 +14,7 @@ func NewBroadcaster() *Broadcaster {
 	}
 }
 
+// Subscribe tworzy osobny kanał dla komponentu, który chce odbierać pogodę.
 func (b *Broadcaster) Subscribe() chan WeatherData {
 	ch := make(chan WeatherData, 5)
 	b.mu.Lock()
@@ -21,6 +23,7 @@ func (b *Broadcaster) Subscribe() chan WeatherData {
 	return ch
 }
 
+// Unsubscribe usuwa subskrybenta i zamyka jego kanał.
 func (b *Broadcaster) Unsubscribe(ch chan WeatherData) {
 	b.mu.Lock()
 	for i, sub := range b.subscribers {
@@ -33,6 +36,7 @@ func (b *Broadcaster) Unsubscribe(ch chan WeatherData) {
 	b.mu.Unlock()
 }
 
+// Broadcast nie blokuje całego systemu, jeśli któryś odbiorca nie nadąża.
 func (b *Broadcaster) Broadcast(data WeatherData) {
 	b.mu.RLock()
 	subs := make([]chan WeatherData, len(b.subscribers))

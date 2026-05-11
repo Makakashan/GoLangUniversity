@@ -5,6 +5,7 @@ import (
 	"sync"
 )
 
+// ConventionalPlant modeluje elektrownię z rozruchem, pracą i wyłączaniem.
 type ConventionalPlant struct {
 	name         string
 	maxPower     float64
@@ -25,6 +26,7 @@ func NewConventionalPlant(name string, maxPower float64, warmUpTime int) *Conven
 	}
 }
 
+// Start uruchamia elektrownię i rozpoczyna etap rozgrzewania.
 func (cp *ConventionalPlant) Start() {
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
@@ -35,6 +37,7 @@ func (cp *ConventionalPlant) Start() {
 	}
 }
 
+// Stop rozpoczyna kontrolowane wygaszanie stacji.
 func (cp *ConventionalPlant) Stop() {
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
@@ -45,6 +48,7 @@ func (cp *ConventionalPlant) Stop() {
 	}
 }
 
+// Update przesuwa stan elektrowni o jeden krok symulacji.
 func (cp *ConventionalPlant) Update() {
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
@@ -67,6 +71,7 @@ func (cp *ConventionalPlant) Update() {
 	}
 }
 
+// GetCurrentPower zwraca aktualnie dostępną moc stacji.
 func (cp *ConventionalPlant) GetCurrentPower() float64 {
 	cp.mu.RLock()
 	defer cp.mu.RUnlock()
@@ -77,6 +82,7 @@ func (cp *ConventionalPlant) GetName() string {
 	return cp.name
 }
 
+// GetStatus zwraca bieżący stan pracy elektrowni.
 func (cp *ConventionalPlant) GetStatus() string {
 	cp.mu.RLock()
 	defer cp.mu.RUnlock()

@@ -2,6 +2,7 @@ package main
 
 import "sync"
 
+// BatteryStorage buforuje energię i pilnuje limitu mocy ładowania/rozładowania.
 type BatteryStorage struct {
 	name     string
 	capacity float64
@@ -19,6 +20,7 @@ func NewBatteryStorage(name string, capacity, maxRate float64, initialSoC float6
 	}
 }
 
+// Charge przyjmuje nadwyżkę, ale nie przekracza pojemności ani maxRate.
 func (bs *BatteryStorage) Charge(amount float64) float64 {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
@@ -44,6 +46,7 @@ func (bs *BatteryStorage) Charge(amount float64) float64 {
 	return amount
 }
 
+// Discharge oddaje energię do sieci w granicach dostępnego SoC i maxRate.
 func (bs *BatteryStorage) Discharge(amount float64) float64 {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
@@ -69,12 +72,14 @@ func (bs *BatteryStorage) Discharge(amount float64) float64 {
 	return amount
 }
 
+// GetSoC zwraca bieżący poziom naładowania w skali 0..1.
 func (bs *BatteryStorage) GetSoC() float64 {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 	return bs.soc
 }
 
+// GetCapacity zwraca maksymalną pojemność magazynu.
 func (bs *BatteryStorage) GetCapacity() float64 {
 	return bs.capacity
 }

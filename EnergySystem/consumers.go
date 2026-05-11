@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// BaseConsumer przechowuje wspólne pola dla wszystkich odbiorców energii.
 type BaseConsumer struct {
 	id         string
 	priority   int
@@ -15,6 +16,7 @@ type BaseConsumer struct {
 	supplyChan <-chan SupplyStatus
 }
 
+// ResidentialConsumer ma typowy profil domowego zużycia energii.
 type ResidentialConsumer struct {
 	BaseConsumer
 	baseDemand float64
@@ -33,6 +35,7 @@ func NewResidentialConsumer(id string, baseDemand float64) *ResidentialConsumer 
 func (rc *ResidentialConsumer) GetID() string    { return rc.id }
 func (rc *ResidentialConsumer) GetPriority() int { return rc.priority }
 
+// Run odtwarza dzienny cykl popytu i reaguje na ograniczenia sieci.
 func (rc *ResidentialConsumer) Run(ctx context.Context, wg *sync.WaitGroup, demandChan chan<- DemandReport, supplyChan <-chan SupplyStatus) {
 	defer wg.Done()
 
@@ -93,6 +96,7 @@ func (rc *ResidentialConsumer) Run(ctx context.Context, wg *sync.WaitGroup, dema
 	}
 }
 
+// IndustrialConsumer ma wyższy i bardziej zmienny pobór w godzinach pracy.
 type IndustrialConsumer struct {
 	BaseConsumer
 	baseDemand float64
@@ -111,6 +115,7 @@ func NewIndustrialConsumer(id string, baseDemand float64) *IndustrialConsumer {
 func (ic *IndustrialConsumer) GetID() string    { return ic.id }
 func (ic *IndustrialConsumer) GetPriority() int { return ic.priority }
 
+// Run symuluje pracę zakładu z możliwością nagłych pików zapotrzebowania.
 func (ic *IndustrialConsumer) Run(ctx context.Context, wg *sync.WaitGroup, demandChan chan<- DemandReport, supplyChan <-chan SupplyStatus) {
 	defer wg.Done()
 
@@ -168,6 +173,7 @@ func (ic *IndustrialConsumer) Run(ctx context.Context, wg *sync.WaitGroup, deman
 	}
 }
 
+// CriticalConsumer reprezentuje odbiorcę, którego zasilanie jest najważniejsze.
 type CriticalConsumer struct {
 	BaseConsumer
 	baseDemand float64
@@ -186,6 +192,7 @@ func NewCriticalConsumer(id string, baseDemand float64) *CriticalConsumer {
 func (cc *CriticalConsumer) GetID() string    { return cc.id }
 func (cc *CriticalConsumer) GetPriority() int { return cc.priority }
 
+// Run utrzymuje stabilny pobór i tylko lekko go losowo waha.
 func (cc *CriticalConsumer) Run(ctx context.Context, wg *sync.WaitGroup, demandChan chan<- DemandReport, supplyChan <-chan SupplyStatus) {
 	defer wg.Done()
 

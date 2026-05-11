@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// buildLogger wybiera format logów na podstawie zmiennej środowiskowej.
 func buildLogger() (DataLogger, error) {
 	format := strings.ToLower(os.Getenv("LOGGER_FORMAT"))
 	switch format {
@@ -22,6 +23,7 @@ func buildLogger() (DataLogger, error) {
 	}
 }
 
+// main tylko składa komponenty razem; cała logika siedzi w osobnych modułach.
 func main() {
 	rand.Seed(time.Now().UnixNano())
 	fmt.Println("=== SYSTEM WSPOŁBIEŻNEGO ZARZĄDZANIA ENERGETYCZNEGO ===")
@@ -79,7 +81,8 @@ func main() {
 	go logger.Run(ctx, &wg)
 
 	// 9. GridHub
-	gridHub := NewGridHub(predictor.GetForecastChan(), logger)
+	weatherChanForHub := broadcaster.Subscribe()
+	gridHub := NewGridHub(weatherChanForHub, predictor.GetForecastChan(), logger)
 	gridHub.AddOZESource(windFarm)
 	gridHub.AddOZESource(solarFarm)
 	gridHub.SetConventional(coalPlant)
@@ -109,6 +112,7 @@ func main() {
 	go gridHub.Run(ctx, &wg)
 
 	// 12. Dynamiczna rejestracja nowego konsumenta
+	// Pokazuje, że sieć może zmieniać się w trakcie działania symulacji.
 	go func() {
 		time.Sleep(30 * GridStep)
 		select {

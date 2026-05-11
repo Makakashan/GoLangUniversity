@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
 
+// GridHub jest centralnym dispatcherem: zbiera dane, bilansuje sieć i wysyła decyzje.
 type GridHub struct {
 	ozeSources         []EnergySource
 	curtailableSources []CurtailableSource
@@ -16,11 +18,13 @@ type GridHub struct {
 	consumers          []Consumer
 	supplyChans        map[string]chan SupplyStatus
 	demandChan         chan DemandReport
+	weatherChan        <-chan WeatherData
 	forecastChan       <-chan ForecastReport
 	logger             DataLogger
 
 	currentDemands   map[string]float64
 	sheddedConsumers map[string]bool
+	lastWeather      WeatherData
 	gridStep         int
 
 	mu            sync.RWMutex
@@ -28,13 +32,15 @@ type GridHub struct {
 	loadShedCount int
 }
 
-func NewGridHub(forecastChan <-chan ForecastReport, logger DataLogger) *GridHub {
+// NewGridHub tworzy główny węzeł sterujący symulacji.
+func NewGridHub(weatherChan <-chan WeatherData, forecastChan <-chan ForecastReport, logger DataLogger) *GridHub {
 	return &GridHub{
 		ozeSources:         make([]EnergySource, 0),
 		curtailableSources: make([]CurtailableSource, 0),
 		consumers:          make([]Consumer, 0),
 		supplyChans:        make(map[string]chan SupplyStatus),
 		demandChan:         make(chan DemandReport, 100),
+		weatherChan:        weatherChan,
 		forecastChan:       forecastChan,
 		logger:             logger,
 		currentDemands:     make(map[string]float64),
@@ -79,6 +85,7 @@ func (gh *GridHub) GetDemandChan() chan<- DemandReport {
 	return gh.demandChan
 }
 
+// Run odbiera popyt, pogodę i prognozy, a następnie uruchamia bilansowanie.
 func (gh *GridHub) Run(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -96,6 +103,11 @@ func (gh *GridHub) Run(ctx context.Context, wg *sync.WaitGroup) {
 			gh.currentDemands[demand.ID] = demand.DemandMW
 			gh.mu.Unlock()
 
+		case weather := <-gh.weatherChan:
+			gh.mu.Lock()
+			gh.lastWeather = weather
+			gh.mu.Unlock()
+
 		case forecast := <-gh.forecastChan:
 			gh.handleForecast(forecast)
 
@@ -106,6 +118,7 @@ func (gh *GridHub) Run(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
+// handleForecast uruchamia lub zatrzymuje elektrownię węglową z wyprzedzeniem.
 func (gh *GridHub) handleForecast(forecast ForecastReport) {
 	if forecast.OZEChangePct < -10 && forecast.Confidence > 0.5 {
 		if gh.conventional != nil && gh.conventional.GetStatus() == "Off" {
@@ -124,6 +137,7 @@ func (gh *GridHub) handleForecast(forecast ForecastReport) {
 	}
 }
 
+// performBalance wykonuje jeden pełny krok decyzji energetycznych.
 func (gh *GridHub) performBalance() {
 	gh.mu.Lock()
 	defer gh.mu.Unlock()
@@ -150,37 +164,37 @@ func (gh *GridHub) performBalance() {
 
 	balance := (ozePower + convPower) - totalDemand
 	status := "STABLE"
+	stepEvents := make([]string, 0, 4)
 
 	if balance > 0 {
 		if gh.ess != nil && gh.ess.GetSoC() < 1.0 {
 			charged := gh.ess.Charge(balance)
 			balance -= charged
 			if charged > 0 {
-				fmt.Printf("[GridHub] Ładowanie ESS: %.1f MWh (SoC: %.1f%%)\n",
-					charged, gh.ess.GetSoC()*100)
+				stepEvents = append(stepEvents, fmt.Sprintf("ESS charge %.1f MWh (SoC %.1f%%)", charged, gh.ess.GetSoC()*100))
 			}
 		}
 
 		if balance > 0 && gh.ess != nil && gh.ess.GetSoC() >= 1.0 {
 			if gh.conventional != nil && gh.conventional.GetStatus() == "Running" {
-				fmt.Printf("[GridHub] Nadwyżka — wyłączam elektrownię węglową\n")
 				gh.conventional.Stop()
 				gh.conventional.Update()
 				convPower = gh.conventional.GetCurrentPower()
 				balance = (ozePower + convPower) - totalDemand
+				stepEvents = append(stepEvents, "Coal plant stopped")
 			}
 		}
 
 		if balance > 0 && len(gh.curtailableSources) > 0 {
 			curtailed := gh.applyCurtailmentLocked(balance, ozePower)
 			if curtailed > 0 {
-				fmt.Printf("[GridHub] Curtailment: ograniczenie OZE o %.1f MW\n", curtailed)
+				stepEvents = append(stepEvents, fmt.Sprintf("Curtailment %.1f MW", curtailed))
 				balance -= curtailed
 			}
 		}
 
 		if balance > 0 {
-			fmt.Printf("[GridHub] OSTRZEŻENIE: Nadal nadwyżka %.1f MW po ESS i Curtailment\n", balance)
+			stepEvents = append(stepEvents, fmt.Sprintf("Residual surplus %.1f MW", balance))
 			balance = 0
 		}
 	} else if balance < 0 {
@@ -189,33 +203,42 @@ func (gh *GridHub) performBalance() {
 			discharged := gh.ess.Discharge(dischargeNeeded)
 			balance += discharged
 			if discharged > 0 {
-				fmt.Printf("[GridHub] Rozładowanie ESS: %.1f MWh (SoC: %.1f%%)\n",
-					discharged, gh.ess.GetSoC()*100)
+				stepEvents = append(stepEvents, fmt.Sprintf("ESS discharge %.1f MWh (SoC %.1f%%)", discharged, gh.ess.GetSoC()*100))
 			}
 		}
 	}
 
 	if balance < -0.1 {
 		status = "CRITICAL"
-		gh.performLoadShedding(-balance)
+		for _, msg := range gh.performLoadShedding(-balance) {
+			stepEvents = append(stepEvents, msg)
+		}
 	}
 
 	if balance >= 0 && len(gh.sheddedConsumers) > 0 {
-		fmt.Printf("[GridHub] Bilans poprawiony — przywracanie konsumentów\n")
 		gh.sheddedConsumers = make(map[string]bool)
+		stepEvents = append(stepEvents, "Consumers restored")
+	}
+
+	if len(stepEvents) > 0 {
+		fmt.Printf("[GridHub] Step %d: %s\n", gh.gridStep, strings.Join(stepEvents, " | "))
 	}
 
 	gh.dispatchSupplyStatusesLocked()
 
 	soC := 0.0
+	windSpeed := 0.0
+	solarStrength := 0.0
 	if gh.ess != nil {
 		soC = gh.ess.GetSoC()
 	}
+	windSpeed = gh.lastWeather.WindSpeed
+	solarStrength = gh.lastWeather.Solar
 
 	entry := LogEntry{
 		GridStep:      gh.gridStep,
-		WindSpeed:     0,
-		SolarPct:      0,
+		WindSpeed:     windSpeed,
+		SolarStrength: solarStrength,
 		OZEPower:      ozePower,
 		Conventional:  convPower,
 		SoC:           soC,
@@ -231,7 +254,8 @@ func (gh *GridHub) performBalance() {
 
 	if gh.gridStep%ReportInterval == 0 {
 		fmt.Printf("\n[=== RAPORT KROK %d ===]\n", gh.gridStep)
-		fmt.Printf("[Pogoda] OZE: %.1f MW | Konwencjonalna: %.1f MW\n", ozePower, convPower)
+		fmt.Printf("[Pogoda] Wiatr: %.1f m/s | Słońce: %.1f/100\n", windSpeed, solarStrength)
+		fmt.Printf("[Generacja] OZE: %.1f MW | Konwencjonalna: %.1f MW\n", ozePower, convPower)
 		fmt.Printf("[Sieć] Popyt: %.1f MW | Bilans: %.1f MW | SoC: %.1f%% | Stan: %s\n",
 			totalDemand, balance, soC*100, status)
 		if gh.conventional != nil {
@@ -242,12 +266,14 @@ func (gh *GridHub) performBalance() {
 	gh.currentDemands = make(map[string]float64)
 }
 
+// clearCurtailmentLocked resetuje ograniczenia OZE przed kolejnym krokiem.
 func (gh *GridHub) clearCurtailmentLocked() {
 	for _, source := range gh.curtailableSources {
 		source.ClearCurtailment()
 	}
 }
 
+// applyCurtailmentLocked obcina OZE proporcjonalnie do nadwyżki energii.
 func (gh *GridHub) applyCurtailmentLocked(surplus float64, ozePower float64) float64 {
 	if surplus <= 0 || ozePower <= 0 {
 		return 0
@@ -268,6 +294,7 @@ func (gh *GridHub) applyCurtailmentLocked(surplus float64, ozePower float64) flo
 	return ozePower * ratio
 }
 
+// dispatchSupplyStatusesLocked wysyła każdemu konsumentowi bieżący stan zasilania.
 func (gh *GridHub) dispatchSupplyStatusesLocked() {
 	for _, consumer := range gh.consumers {
 		id := consumer.GetID()
@@ -292,7 +319,8 @@ func (gh *GridHub) dispatchSupplyStatusesLocked() {
 	}
 }
 
-func (gh *GridHub) performLoadShedding(deficit float64) {
+// performLoadShedding odłącza odbiorców w kolejności od najmniej istotnych.
+func (gh *GridHub) performLoadShedding(deficit float64) []string {
 	type consumerInfo struct {
 		id       string
 		priority int
@@ -315,6 +343,7 @@ func (gh *GridHub) performLoadShedding(deficit float64) {
 		return consumers[i].priority > consumers[j].priority
 	})
 
+	events := make([]string, 0, len(consumers)+1)
 	remainingDeficit := deficit
 	for _, c := range consumers {
 		if remainingDeficit <= 0 {
@@ -324,10 +353,9 @@ func (gh *GridHub) performLoadShedding(deficit float64) {
 			continue
 		}
 
-		fmt.Printf("[GridHub] Load Shedding: odłączam %s (priorytet %d, zapotrzebowanie %.1f MW)\n",
-			c.id, c.priority, c.demand)
 		gh.sheddedConsumers[c.id] = true
 		remainingDeficit -= c.demand
+		events = append(events, fmt.Sprintf("shed %s (priorytet %d, %.1f MW)", c.id, c.priority, c.demand))
 
 		gh.statsMu.Lock()
 		gh.loadShedCount++
@@ -335,6 +363,8 @@ func (gh *GridHub) performLoadShedding(deficit float64) {
 	}
 
 	if remainingDeficit > 0 {
-		fmt.Printf("[GridHub] OSTRZEŻENIE: Nadal niedobór %.1f MW po Load Shedding!\n", remainingDeficit)
+		events = append(events, fmt.Sprintf("remaining deficit %.1f MW", remainingDeficit))
 	}
+
+	return events
 }
