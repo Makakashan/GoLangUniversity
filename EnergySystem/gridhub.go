@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+const (
+	conventionalMinUpSteps   = 3
+	conventionalMinDownSteps = 3
+)
+
 // GridHub jest centralnym dispatcherem: zbiera dane, bilansuje sieć i wysyła decyzje.
 type GridHub struct {
 	ozeSources         []EnergySource
@@ -30,23 +35,28 @@ type GridHub struct {
 	mu            sync.RWMutex
 	statsMu       sync.Mutex
 	loadShedCount int
+
+	conventionalStartedStep  int
+	conventionalLastStopStep int
 }
 
 // NewGridHub tworzy główny węzeł sterujący symulacji.
 func NewGridHub(weatherChan <-chan WeatherData, forecastChan <-chan ForecastReport, logger DataLogger) *GridHub {
 	return &GridHub{
-		ozeSources:         make([]EnergySource, 0),
-		curtailableSources: make([]CurtailableSource, 0),
-		consumers:          make([]Consumer, 0),
-		supplyChans:        make(map[string]chan SupplyStatus),
-		demandChan:         make(chan DemandReport, 100),
-		weatherChan:        weatherChan,
-		forecastChan:       forecastChan,
-		logger:             logger,
-		currentDemands:     make(map[string]float64),
-		sheddedConsumers:   make(map[string]bool),
-		gridStep:           0,
-		loadShedCount:      0,
+		ozeSources:               make([]EnergySource, 0),
+		curtailableSources:       make([]CurtailableSource, 0),
+		consumers:                make([]Consumer, 0),
+		supplyChans:              make(map[string]chan SupplyStatus),
+		demandChan:               make(chan DemandReport, 100),
+		weatherChan:              weatherChan,
+		forecastChan:             forecastChan,
+		logger:                   logger,
+		currentDemands:           make(map[string]float64),
+		sheddedConsumers:         make(map[string]bool),
+		gridStep:                 0,
+		loadShedCount:            0,
+		conventionalStartedStep:  -1,
+		conventionalLastStopStep: -conventionalMinDownSteps,
 	}
 }
 
@@ -121,7 +131,8 @@ func (gh *GridHub) Run(ctx context.Context, wg *sync.WaitGroup) {
 // handleForecast uruchamia lub zatrzymuje elektrownię węglową z wyprzedzeniem.
 func (gh *GridHub) handleForecast(forecast ForecastReport) {
 	if forecast.OZEChangePct < -10 && forecast.Confidence > 0.5 {
-		if gh.conventional != nil && gh.conventional.GetStatus() == "Off" {
+		if gh.conventional != nil && gh.conventional.GetStatus() == "Off" &&
+			(gh.conventionalLastStopStep < 0 || gh.gridStep-gh.conventionalLastStopStep >= conventionalMinDownSteps) {
 			fmt.Printf("[GridHub] Prognoza spadku OZE o %.1f%% — uruchamiam elektrownię węglową\n",
 				forecast.OZEChangePct)
 			gh.conventional.Start()
@@ -149,12 +160,17 @@ func (gh *GridHub) performBalance() {
 		ozePower += source.GetCurrentPower()
 	}
 
+	prevConvStatus := ""
 	if gh.conventional != nil {
+		prevConvStatus = gh.conventional.GetStatus()
 		gh.conventional.Update()
 	}
 	convPower := 0.0
 	if gh.conventional != nil {
 		convPower = gh.conventional.GetCurrentPower()
+		if prevConvStatus != "Running" && gh.conventional.GetStatus() == "Running" {
+			gh.conventionalStartedStep = gh.gridStep
+		}
 	}
 
 	totalDemand := 0.0
@@ -176,11 +192,16 @@ func (gh *GridHub) performBalance() {
 		}
 
 		if balance > 0 && gh.ess != nil && gh.ess.GetSoC() >= 1.0 {
-			if gh.conventional != nil && gh.conventional.GetStatus() == "Running" {
+			if gh.conventional != nil && gh.conventional.GetStatus() == "Running" &&
+				gh.conventionalStartedStep >= 0 &&
+				gh.gridStep-gh.conventionalStartedStep >= conventionalMinUpSteps &&
+				(gh.gridStep-gh.conventionalLastStopStep >= conventionalMinDownSteps) {
 				gh.conventional.Stop()
 				gh.conventional.Update()
 				convPower = gh.conventional.GetCurrentPower()
 				balance = (ozePower + convPower) - totalDemand
+				gh.conventionalLastStopStep = gh.gridStep
+				gh.conventionalStartedStep = -1
 				stepEvents = append(stepEvents, "Coal plant stopped")
 			}
 		}
