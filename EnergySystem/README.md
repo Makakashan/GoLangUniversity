@@ -51,8 +51,7 @@ Struktura jest już dopasowana do diagramu:
 ## Skalowanie czasu
 
 - `WeatherStep`: 5 ms
-- `GridStep`: 100 ms
-- 1 doba symulacji = 2.4 s czasu rzeczywistego
+- `GridStep`: 60 ms
 
 ## Uruchomienie
 

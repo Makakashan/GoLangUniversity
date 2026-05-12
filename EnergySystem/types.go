@@ -9,7 +9,7 @@ import (
 // Skala czasu symulacji: pogoda zmienia się częściej niż bilans sieci.
 const (
 	WeatherStep         = 5 * time.Millisecond        // ~5 minut czasu symulacji
-	GridStep            = 100 * time.Millisecond      // 1 godzina czasu symulacji
+	GridStep            = 60 * time.Millisecond       // 1 godzina czasu symulacji
 	WeatherPerGrid      = int(GridStep / WeatherStep) // 12 kroków pogodowych
 	ForecastHorizon     = 5                           // prognoza na 5 kroków GridStep
 	PredictorBufferSize = WeatherPerGrid * 2          // bufor = 2 godziny historii
