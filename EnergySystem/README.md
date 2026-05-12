@@ -1,7 +1,5 @@
 # System Współbieżnego Zarządzania Rozproszoną Siecią Energetyczną
 
-Projekt реализует симулятор энергосети na Go z użyciem gorutyn, kanałów i graceful shutdown.
-
 ## Jak działa system
 
 Struktura jest już dopasowana do diagramu:
@@ -67,12 +65,3 @@ LOGGER_FORMAT=json ./grid_simulator
 ```
 
 Zatrzymanie symulacji: `Ctrl+C`
-
-## Co już działa zgodnie z diagramem
-
-- dane pogodowe idą przez `Broadcaster`
-- OZE i predictor są podpięte do warstwy wejściowej
-- `GridHub` steruje `ESS`, elektrownią węglową i curtailmentem
-- konsumenci dostają `SupplyStatus`
-- logowanie działa asynchronicznie
-- dynamiczna rejestracja nowego konsumenta nadal działa
