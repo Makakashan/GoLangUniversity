@@ -57,7 +57,7 @@ func (dl *JSONDataLogger) Run(ctx context.Context, wg *sync.WaitGroup) {
 		select {
 		case <-ctx.Done():
 			fmt.Println("[DataLogger] Zamykanie i zapisywanie JSON...")
-			dl.flush()
+			dl.drainAndFlush()
 			return
 		case entry := <-dl.logChan:
 			dl.writeEntry(entry)
@@ -69,6 +69,19 @@ func (dl *JSONDataLogger) writeEntry(entry LogEntry) {
 	dl.mu.Lock()
 	defer dl.mu.Unlock()
 	_ = dl.encoder.Encode(entry)
+}
+
+// drainAndFlush opróżnia kolejkę logów, a dopiero potem domyka plik.
+func (dl *JSONDataLogger) drainAndFlush() {
+	for {
+		select {
+		case entry := <-dl.logChan:
+			dl.writeEntry(entry)
+		default:
+			dl.flush()
+			return
+		}
+	}
 }
 
 // flush domyka bufor i plik na zakończenie pracy.

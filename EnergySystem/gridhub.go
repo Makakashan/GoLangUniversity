@@ -16,16 +16,20 @@ const (
 
 // GridHub jest centralnym dispatcherem: zbiera dane, bilansuje sieć i wysyła decyzje.
 type GridHub struct {
-	ozeSources         []EnergySource
-	curtailableSources []CurtailableSource
-	conventional       *ConventionalPlant
-	ess                EnergyStorage
-	consumers          []Consumer
-	supplyChans        map[string]chan SupplyStatus
-	demandChan         chan DemandReport
-	weatherChan        <-chan WeatherData
-	forecastChan       <-chan ForecastReport
-	logger             DataLogger
+	ozeSources             []EnergySource
+	curtailableSources     []CurtailableSource
+	conventionalCmdChan    chan<- ConventionalCommand
+	conventionalReportChan <-chan ConventionalReport
+	conventionalStatus     string
+	conventionalPower      float64
+	conventionalReportTime time.Time
+	ess                    EnergyStorage
+	consumers              []Consumer
+	supplyChans            map[string]chan SupplyStatus
+	demandChan             chan DemandReport
+	weatherChan            <-chan WeatherData
+	forecastChan           <-chan ForecastReport
+	logger                 DataLogger
 
 	currentDemands   map[string]float64
 	sheddedConsumers map[string]bool
@@ -55,6 +59,8 @@ func NewGridHub(weatherChan <-chan WeatherData, forecastChan <-chan ForecastRepo
 		sheddedConsumers:         make(map[string]bool),
 		gridStep:                 0,
 		loadShedCount:            0,
+		conventionalStatus:       "Off",
+		conventionalPower:        0,
 		conventionalStartedStep:  -1,
 		conventionalLastStopStep: -conventionalMinDownSteps,
 	}
@@ -69,8 +75,11 @@ func (gh *GridHub) AddOZESource(source EnergySource) {
 	gh.mu.Unlock()
 }
 
-func (gh *GridHub) SetConventional(plant *ConventionalPlant) {
-	gh.conventional = plant
+func (gh *GridHub) SetConventional(commandChan chan<- ConventionalCommand, reportChan <-chan ConventionalReport) {
+	gh.conventionalCmdChan = commandChan
+	gh.conventionalReportChan = reportChan
+	gh.conventionalStatus = "Off"
+	gh.conventionalPower = 0
 }
 
 func (gh *GridHub) SetESS(ess EnergyStorage) {
@@ -121,6 +130,21 @@ func (gh *GridHub) Run(ctx context.Context, wg *sync.WaitGroup) {
 		case forecast := <-gh.forecastChan:
 			gh.handleForecast(forecast)
 
+		case report := <-gh.conventionalReportChan:
+			if !gh.conventionalReportTime.IsZero() && report.Timestamp.Before(gh.conventionalReportTime) {
+				break
+			}
+			prevStatus := gh.conventionalStatus
+			gh.conventionalReportTime = report.Timestamp
+			gh.conventionalStatus = report.Status
+			gh.conventionalPower = report.CurrentPower
+			if prevStatus != "Running" && report.Status == "Running" {
+				gh.conventionalStartedStep = gh.gridStep
+			}
+			if prevStatus != "Off" && report.Status == "Off" {
+				gh.conventionalLastStopStep = gh.gridStep
+			}
+
 		case <-ticker.C:
 			gh.performBalance()
 			gh.gridStep++
@@ -131,19 +155,26 @@ func (gh *GridHub) Run(ctx context.Context, wg *sync.WaitGroup) {
 // handleForecast uruchamia lub zatrzymuje elektrownię węglową z wyprzedzeniem.
 func (gh *GridHub) handleForecast(forecast ForecastReport) {
 	if forecast.OZEChangePct < -10 && forecast.Confidence > 0.5 {
-		if gh.conventional != nil && gh.conventional.GetStatus() == "Off" &&
+		if gh.conventionalCmdChan != nil && gh.conventionalStatus == "Off" &&
 			(gh.conventionalLastStopStep < 0 || gh.gridStep-gh.conventionalLastStopStep >= conventionalMinDownSteps) {
 			fmt.Printf("[GridHub] Prognoza spadku OZE o %.1f%% — uruchamiam elektrownię węglową\n",
 				forecast.OZEChangePct)
-			gh.conventional.Start()
+			gh.conventionalCmdChan <- ConventionalCommandStart
+			gh.conventionalStatus = "WarmingUp"
+			gh.conventionalReportTime = time.Now()
 		}
 	}
 
 	if forecast.OZEChangePct > 20 && forecast.Confidence > 0.7 {
-		if gh.conventional != nil && gh.conventional.GetStatus() == "Running" {
+		if gh.conventionalCmdChan != nil && (gh.conventionalStatus == "Running" || gh.conventionalStatus == "WarmingUp") {
 			fmt.Printf("[GridHub] Prognoza wzrostu OZE o %.1f%% — wyłączam elektrownię węglową\n",
 				forecast.OZEChangePct)
-			gh.conventional.Stop()
+			gh.conventionalCmdChan <- ConventionalCommandStop
+			gh.conventionalStatus = "CoolingDown"
+			gh.conventionalPower = 0
+			gh.conventionalReportTime = time.Now()
+			gh.conventionalLastStopStep = gh.gridStep
+			gh.conventionalStartedStep = -1
 		}
 	}
 }
@@ -160,18 +191,7 @@ func (gh *GridHub) performBalance() {
 		ozePower += source.GetCurrentPower()
 	}
 
-	prevConvStatus := ""
-	if gh.conventional != nil {
-		prevConvStatus = gh.conventional.GetStatus()
-		gh.conventional.Update()
-	}
-	convPower := 0.0
-	if gh.conventional != nil {
-		convPower = gh.conventional.GetCurrentPower()
-		if prevConvStatus != "Running" && gh.conventional.GetStatus() == "Running" {
-			gh.conventionalStartedStep = gh.gridStep
-		}
-	}
+	convPower := gh.conventionalPower
 
 	totalDemand := 0.0
 	for _, demand := range gh.currentDemands {
@@ -192,17 +212,21 @@ func (gh *GridHub) performBalance() {
 		}
 
 		if balance > 0 && gh.ess != nil && gh.ess.GetSoC() >= 1.0 {
-			if gh.conventional != nil && gh.conventional.GetStatus() == "Running" &&
-				gh.conventionalStartedStep >= 0 &&
-				gh.gridStep-gh.conventionalStartedStep >= conventionalMinUpSteps &&
-				(gh.gridStep-gh.conventionalLastStopStep >= conventionalMinDownSteps) {
-				gh.conventional.Stop()
-				gh.conventional.Update()
-				convPower = gh.conventional.GetCurrentPower()
-				balance = (ozePower + convPower) - totalDemand
-				gh.conventionalLastStopStep = gh.gridStep
-				gh.conventionalStartedStep = -1
-				stepEvents = append(stepEvents, "Coal plant stopped")
+			if gh.conventionalCmdChan != nil && (gh.conventionalStatus == "Running" || gh.conventionalStatus == "WarmingUp") {
+				if gh.conventionalStatus != "WarmingUp" && gh.conventionalStartedStep >= 0 &&
+					gh.gridStep-gh.conventionalStartedStep < conventionalMinUpSteps {
+					// Za wcześnie na wyłączenie — elektrownia musi popracować minimalny czas.
+				} else if gh.gridStep-gh.conventionalLastStopStep >= conventionalMinDownSteps {
+					gh.conventionalCmdChan <- ConventionalCommandStop
+					gh.conventionalStatus = "CoolingDown"
+					gh.conventionalPower = 0
+					gh.conventionalReportTime = time.Now()
+					convPower = 0
+					balance = (ozePower + convPower) - totalDemand
+					gh.conventionalLastStopStep = gh.gridStep
+					gh.conventionalStartedStep = -1
+					stepEvents = append(stepEvents, "Coal plant stopped")
+				}
 			}
 		}
 
@@ -279,8 +303,8 @@ func (gh *GridHub) performBalance() {
 		fmt.Printf("[Generacja] OZE: %.1f MW | Konwencjonalna: %.1f MW\n", ozePower, convPower)
 		fmt.Printf("[Sieć] Popyt: %.1f MW | Bilans: %.1f MW | SoC: %.1f%% | Stan: %s\n",
 			totalDemand, balance, soC*100, status)
-		if gh.conventional != nil {
-			fmt.Printf("[Elektrownia] Status: %s\n", gh.conventional.GetStatus())
+		if gh.conventionalCmdChan != nil {
+			fmt.Printf("[Elektrownia] Status: %s\n", gh.conventionalStatus)
 		}
 	}
 

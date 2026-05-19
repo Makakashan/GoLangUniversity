@@ -1,9 +1,27 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"sync"
+	"time"
 )
+
+// ConventionalCommand steruje pracą elektrowni poprzez kanał.
+type ConventionalCommand string
+
+const (
+	ConventionalCommandStart ConventionalCommand = "START"
+	ConventionalCommandStop  ConventionalCommand = "STOP"
+)
+
+// ConventionalReport przekazuje GridHub aktualny stan elektrowni.
+type ConventionalReport struct {
+	Name         string
+	Status       string
+	CurrentPower float64
+	Timestamp    time.Time
+}
 
 // ConventionalPlant modeluje elektrownię z rozruchem, pracą i wyłączaniem.
 type ConventionalPlant struct {
@@ -13,16 +31,58 @@ type ConventionalPlant struct {
 	warmUpTime   int
 	warmUpLeft   int
 	currentPower float64
-	mu           sync.RWMutex
+
+	commandChan chan ConventionalCommand
+	reportChan  chan ConventionalReport
+	mu          sync.RWMutex
 }
 
 func NewConventionalPlant(name string, maxPower float64, warmUpTime int) *ConventionalPlant {
 	return &ConventionalPlant{
-		name:       name,
-		maxPower:   maxPower,
-		status:     "Off",
-		warmUpTime: warmUpTime,
-		warmUpLeft: 0,
+		name:        name,
+		maxPower:    maxPower,
+		status:      "Off",
+		warmUpTime:  warmUpTime,
+		warmUpLeft:  0,
+		commandChan: make(chan ConventionalCommand, 10),
+		reportChan:  make(chan ConventionalReport, 10),
+	}
+}
+
+func (cp *ConventionalPlant) GetCommandChan() chan<- ConventionalCommand {
+	return cp.commandChan
+}
+
+func (cp *ConventionalPlant) GetReportChan() <-chan ConventionalReport {
+	return cp.reportChan
+}
+
+// Run obsługuje komendy z GridHub i cyklicznie aktualizuje stan elektrowni.
+func (cp *ConventionalPlant) Run(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	ticker := time.NewTicker(GridStep)
+	defer ticker.Stop()
+
+	cp.publishStatus()
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Printf("[%s] Zamykanie...\n", cp.name)
+			return
+		case command := <-cp.commandChan:
+			switch command {
+			case ConventionalCommandStart:
+				cp.Start()
+			case ConventionalCommandStop:
+				cp.Stop()
+			}
+			cp.publishStatus()
+		case <-ticker.C:
+			cp.Update()
+			cp.publishStatus()
+		}
 	}
 }
 
@@ -87,4 +147,18 @@ func (cp *ConventionalPlant) GetStatus() string {
 	cp.mu.RLock()
 	defer cp.mu.RUnlock()
 	return cp.status
+}
+
+func (cp *ConventionalPlant) publishStatus() {
+	report := ConventionalReport{
+		Name:         cp.GetName(),
+		Status:       cp.GetStatus(),
+		CurrentPower: cp.GetCurrentPower(),
+		Timestamp:    time.Now(),
+	}
+
+	select {
+	case cp.reportChan <- report:
+	default:
+	}
 }

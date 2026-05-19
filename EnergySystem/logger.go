@@ -60,7 +60,7 @@ func (dl *CSVDataLogger) Run(ctx context.Context, wg *sync.WaitGroup) {
 		select {
 		case <-ctx.Done():
 			fmt.Println("[DataLogger] Zamykanie i zapisywanie...")
-			dl.flush()
+			dl.drainAndFlush()
 			return
 		case entry := <-dl.logChan:
 			dl.writeEntry(entry)
@@ -86,6 +86,19 @@ func (dl *CSVDataLogger) writeEntry(entry LogEntry) {
 		entry.Timestamp.Format(time.RFC3339),
 	}
 	dl.csvWriter.Write(record)
+}
+
+// drainAndFlush opróżnia kolejkę logów, a dopiero potem domyka plik.
+func (dl *CSVDataLogger) drainAndFlush() {
+	for {
+		select {
+		case entry := <-dl.logChan:
+			dl.writeEntry(entry)
+		default:
+			dl.flush()
+			return
+		}
+	}
 }
 
 // flush zapisuje bufory i zamyka plik przy wyłączaniu systemu.

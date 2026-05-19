@@ -67,6 +67,8 @@ func main() {
 
 	// 6. Elektrownia węglowa
 	coalPlant := NewConventionalPlant("ElektrowniaWeglowa", 300.0, 3)
+	wg.Add(1)
+	go coalPlant.Run(ctx, &wg)
 
 	// 7. ESS
 	battery := NewBatteryStorage("BateriaGlowna", 500.0, 100.0, 0.5)
@@ -85,7 +87,7 @@ func main() {
 	gridHub := NewGridHub(weatherChanForHub, predictor.GetForecastChan(), logger)
 	gridHub.AddOZESource(windFarm)
 	gridHub.AddOZESource(solarFarm)
-	gridHub.SetConventional(coalPlant)
+	gridHub.SetConventional(coalPlant.GetCommandChan(), coalPlant.GetReportChan())
 	gridHub.SetESS(battery)
 
 	// 10. Konsumenci (Fan-In + SupplyStatus feedback)
